@@ -1,0 +1,722 @@
+# FENIXCMS SAAS — FASE 1 AMPLIADA
+## Núcleo técnico, diseño visual y panel del superadministrador
+
+**Instrucción principal para Google AI Studio:** implementar esta fase en el proyecto FenixCMS SaaS. No te limites a describirla ni a generar una maqueta. Analiza primero los archivos disponibles, implementa el código, conecta el frontend con el backend, prepara las migraciones y ejecuta las pruebas que sean posibles.
+
+Esta fase establece la arquitectura técnica y la primera versión funcional del superadministrador. Las fases siguientes desarrollarán los módulos comerciales completos, el sistema avanzado de plugins y temas, los importadores y las tiendas de los clientes.
+
+No afirmes que una función está terminada si solo existe su diseño visual.
+
+---
+
+# 1. OBJETIVO GENERAL
+
+Crear una plataforma SaaS multitenant llamada FenixCMS, preparada para gestionar varios clientes, dominios, módulos, planes, suscripciones, licencias y extensiones.
+
+La plataforma debe permitir que el superadministrador gestione el sistema desde:
+
+`https://fenixcms.es/superadmin`
+
+El portal de los clientes que compran servicios de FenixCMS será:
+
+`https://fenixcms.es/login`
+
+Ejemplo de dominio de una tienda cliente:
+
+- `https://latotaltienda.es/admin`: administración privada de la tienda.
+- `https://latotaltienda.es/login`: acceso de compradores de esa tienda.
+
+Estas zonas deben estar separadas tanto visualmente como en autenticación, autorización, sesiones, datos y rutas del servidor.
+
+El dominio de ejemplo no debe quedar escrito como una dirección fija en la lógica. El sistema debe admitir múltiples dominios y resolverlos mediante configuración y registros verificados.
+
+## 1.1. Reglas fundamentales
+
+1. Crear una base limpia para esta nueva arquitectura.
+2. No reutilizar los plugins ni los temas antiguos.
+3. Mantener PostgreSQL como fuente de verdad en producción.
+4. No introducir datos de demostración que se confundan con información real.
+5. No permitir que el navegador determine precios, permisos o confirmaciones de pago.
+6. Aplicar los controles de seguridad en el backend.
+7. Preparar desde el principio los siete idiomas acordados.
+8. Preparar una interfaz diferente para cada tipo de módulo.
+9. No crear ninguna barra de búsqueda global ni campo de búsqueda en la cabecera.
+10. Conservar la posibilidad de ampliar la plataforma sin tener que modificar toda su arquitectura.
+
+Antes de modificar archivos existentes, identifica el estado del repositorio y las diferencias con la base de partida. Trabaja preferentemente en una rama o copia de reconstrucción independiente y conserva un respaldo verificable. No borres archivos ni datos sin identificar su función y comprobar que existe una copia de seguridad.
+
+---
+
+# 2. TECNOLOGÍAS Y ARQUITECTURA
+
+Utilizar la siguiente arquitectura, respetando las versiones compatibles y el archivo de bloqueo del proyecto.
+
+- **Frontend:** Next.js con App Router y React.
+- **Lenguaje:** TypeScript con comprobación estricta.
+- **Estilos:** CSS modular, CSS variables o una solución de estilos consistente con el proyecto.
+- **Base de datos:** PostgreSQL.
+- **ORM:** Prisma.
+- **Validación:** Zod o una alternativa equivalente ya instalada y mantenida.
+- **Autenticación:** mecanismo seguro basado en sesiones del servidor.
+- **Contraseñas:** hash moderno resistente a ataques, preferiblemente Argon2id.
+- **Pruebas:** pruebas unitarias, de integración y de seguridad.
+- **Control de versiones:** Git.
+- **Despliegue:** configuración compatible con un VPS Linux y un proxy inverso HTTPS.
+
+No actualices automáticamente todas las dependencias a versiones mayores. Comprueba la compatibilidad antes de elegir versiones, conserva un lockfile coherente y documenta las decisiones técnicas.
+
+## 2.1. Separación de responsabilidades
+
+Organizar el código de forma que cada capa tenga una función clara:
+
+- `app/`: páginas y rutas HTTP.
+- `components/`: componentes reutilizables del frontend.
+- `lib/auth/`: autenticación, sesiones y permisos.
+- `lib/tenancy/`: resolución y aislamiento de tenants.
+- `lib/validation/`: esquemas de validación.
+- `lib/services/`: lógica de negocio.
+- `lib/repositories/`: acceso a datos, si se utiliza esta capa.
+- `lib/security/`: controles de seguridad.
+- `lib/i18n/`: idiomas y traducciones.
+- `prisma/`: esquema, migraciones y herramientas de base de datos.
+- `messages/`: catálogos de traducciones.
+- `tests/`: pruebas automatizadas.
+- `docs/`: decisiones de arquitectura, configuración y funcionamiento.
+
+Adapta los directorios si el proyecto existente ya contiene una estructura equivalente, pero no mezcles toda la lógica en componentes React ni en una sola ruta de API.
+
+## 2.2. Acceso a la base de datos
+
+Crear un único cliente Prisma reutilizable en el servidor.
+
+Reglas obligatorias:
+
+- No ejecutar consultas Prisma directamente desde componentes cliente.
+- No enviar credenciales de la base de datos al navegador.
+- No dejar que un usuario seleccione libremente el tenant que desea consultar sin autorización.
+- Utilizar transacciones para operaciones que necesitan consistencia.
+- Definir restricciones `UNIQUE`, claves foráneas e índices donde corresponda.
+- Usar migraciones versionadas y verificables.
+- No usar memoria como sustituto silencioso de PostgreSQL en producción.
+- Si la base de datos no está disponible en producción, devolver un error controlado y registrar el incidente sin revelar secretos.
+
+---
+
+# 3. IDENTIDAD VISUAL: NEGRO Y ROJO, ESTILO COMERCIAL TIPO AMAZON
+
+Diseñar la zona del superadministrador inspirándose en una plataforma de comercio electrónico profesional, con información clara, navegación reconocible y acciones rápidas.
+
+No copiar logotipo, textos, imágenes ni identidad de Amazon. FenixCMS debe tener su propia identidad.
+
+## 3.1. Paleta de colores
+
+Definir los siguientes valores como base y centralizarlos en variables CSS:
+
+- Negro principal: `#111111`
+- Negro secundario: `#1B1B1B`
+- Rojo principal: `#D71920`
+- Rojo oscuro para estados de interacción: `#A81218`
+- Fondo general: `#F4F5F7`
+- Fondo de tarjetas: `#FFFFFF`
+- Texto principal: `#171717`
+- Texto secundario: `#626262`
+- Bordes: `#DDDDDD`
+- Verde de éxito: `#167D45`
+- Ámbar de advertencia: `#9A5B00`
+- Rojo de error: `#B42318`
+
+El rojo se utilizará para las acciones principales, los estados críticos y los elementos de marca. No colorear indiscriminadamente todos los elementos de rojo.
+
+Verificar contraste, lectura, navegación con teclado y estados de foco.
+
+## 3.2. Estructura de la interfaz
+
+### Cabecera superior
+
+Crear una cabecera oscura con:
+
+- Logotipo FenixCMS configurable.
+- Nombre de la zona: «Superadministración».
+- Selector de idioma.
+- Acceso al perfil del superadministrador.
+- Acceso a notificaciones, si estas están implementadas.
+- Menú de cuenta con cambio de contraseña y cierre de sesión.
+
+**Prohibido incluir una barra de búsqueda**, un campo de búsqueda global o un icono que abra dicha barra.
+
+### Navegación principal
+
+Crear un menú lateral oscuro o una navegación equivalente, con iconos y etiquetas.
+
+En escritorio, el menú podrá contraerse. En móviles debe convertirse en un menú accesible.
+
+Las opciones del menú deben tener permisos asociados en el servidor. Ocultar una opción en pantalla no sustituye a la comprobación de autorización.
+
+### Área de contenido
+
+El área de contenido tendrá:
+
+- Título de la sección.
+- Texto explicativo breve.
+- Indicadores y tarjetas de resumen.
+- Tablas con ordenación y paginación.
+- Formularios consistentes.
+- Ventanas de confirmación para acciones peligrosas.
+- Mensajes de error y éxito traducidos.
+- Estados de carga, vacío y error.
+- Diseño adaptable a escritorio, tableta y móvil.
+
+No presentar métricas inventadas. Si todavía no existen datos reales, mostrar un estado vacío o indicar «Sin datos disponibles».
+
+### Filtros permitidos
+
+No incluir campos de búsqueda textual. Para filtrar las tablas, utilizar selectores de estado, tipo de módulo, periodicidad, idioma y rango de fechas cuando corresponda.
+
+No debe existir una barra de búsqueda escondida dentro de un menú, diálogo o página.
+
+## 3.3. Sistema visual reutilizable
+
+Crear componentes comunes:
+
+- `SuperadminLayout`
+- `SuperadminHeader`
+- `SuperadminSidebar`
+- `PageHeader`
+- `StatCard`
+- `DataTable`
+- `StatusBadge`
+- `FormField`
+- `SelectField`
+- `DateRangeFilter`
+- `ConfirmDialog`
+- `Pagination`
+- `EmptyState`
+- `LoadingState`
+- `ErrorState`
+- `ToastNotification`
+- `LanguageSwitcher`
+- `UserAccountMenu`
+
+Evitar duplicar estilos y comportamiento en cada página.
+
+---
+
+# 4. RUTAS Y SEPARACIÓN DE LAS CUATRO ZONAS
+
+Implementar esta separación desde el router y el sistema de autorización.
+
+## 4.1. Superadministración de FenixCMS
+
+Rutas previstas:
+
+- `/superadmin`: panel principal.
+- `/superadmin/login`: autenticación del superadministrador.
+- `/superadmin/cambiar-contrasena`: cambio de contraseña.
+- `/superadmin/perfil`: datos del superadministrador.
+- `/superadmin/usuarios`: administración de usuarios de la plataforma.
+- `/superadmin/clientes`: cuentas que contratan servicios FenixCMS.
+- `/superadmin/tenants`: espacios y dominios de clientes.
+- `/superadmin/modulos`: catálogo de módulos.
+- `/superadmin/planes`: planes y combinaciones.
+- `/superadmin/precios`: tarifas y periodicidades.
+- `/superadmin/descuentos`: reglas comerciales.
+- `/superadmin/suscripciones`: suscripciones.
+- `/superadmin/pagos`: registros de pagos.
+- `/superadmin/licencias`: licencias y activaciones.
+- `/superadmin/plugins`: catálogo y gestión de metadatos de plugins.
+- `/superadmin/temas`: catálogo y gestión de metadatos de temas.
+- `/superadmin/importadores`: catálogo y estado de importadores.
+- `/superadmin/idiomas`: configuración de idiomas.
+- `/superadmin/configuracion`: configuración general.
+- `/superadmin/auditoria`: auditoría de operaciones.
+- `/superadmin/sistema`: estado técnico y comprobaciones de salud.
+
+Las páginas deben construirse con una estructura uniforme y tener permisos definidos.
+
+Cuando una función esté prevista para una fase posterior, debe indicarse claramente. No presentar un botón que simule una operación inexistente como si funcionara.
+
+## 4.2. Portal de cliente FenixCMS
+
+`/login` en el dominio de la plataforma debe servir para la cuenta del cliente SaaS.
+
+Desde esa cuenta el cliente podrá consultar los productos o servicios FenixCMS que haya contratado: módulos, planes, plugins, temas o importadores cuando estén disponibles.
+
+Este portal no es la tienda pública que el cliente administra ni la zona de compradores de una tienda.
+
+## 4.3. Administración de cada tienda
+
+Ejemplo:
+
+`https://latotaltienda.es/admin`
+
+Debe resolver al espacio de administración del tenant correspondiente.
+
+El acceso debe comprobar:
+
+- Identidad autenticada.
+- Membresía en el tenant.
+- Rol suficiente.
+- Estado de la cuenta y del tenant.
+- Módulos y permisos contratados, cuando corresponda.
+
+Un cliente de FenixCMS no debe poder abrir la administración de otra tienda cambiando el dominio, un identificador o una URL.
+
+## 4.4. Compradores de una tienda cliente
+
+Ejemplo:
+
+`https://latotaltienda.es/login`
+
+Debe permitir el acceso de los compradores finales de esa tienda.
+
+Los compradores solo podrán consultar sus propios pedidos y la información que les corresponda. No podrán entrar en el panel `/admin` por el simple hecho de tener una cuenta de comprador.
+
+Los usuarios de `fenixcms.es/login`, los administradores de cada tenant y los compradores de las tiendas deben tener contextos de acceso diferenciados.
+
+---
+
+# 5. AUTENTICACIÓN DEL SUPERADMINISTRADOR
+
+Construir el inicio de sesión funcional y conectado al backend.
+
+## 5.1. Página de acceso
+
+Crear `/superadmin/login` con:
+
+- Identidad visual negra y roja.
+- Formulario de correo electrónico y contraseña.
+- Mostrar u ocultar contraseña.
+- Validación de campos.
+- Mensajes traducidos.
+- Estado de carga.
+- Error genérico para credenciales inválidas.
+- Enlace de recuperación de contraseña si el flujo seguro está implementado.
+- Adaptación móvil y accesibilidad.
+
+No revelar si un correo concreto tiene cuenta al responder a intentos fallidos de inicio de sesión.
+
+## 5.2. Creación del primer superadministrador
+
+Preparar un proceso de inicialización controlado, ejecutado desde el servidor.
+
+Las credenciales iniciales procederán de variables de entorno protegidas o de un procedimiento seguro equivalente.
+
+Reglas:
+
+- No incluir contraseñas predeterminadas en el código.
+- No incluir secretos en el repositorio.
+- No registrar contraseñas en logs.
+- No convertir automáticamente a un usuario existente en superadministrador por el mero hecho de coincidir el correo electrónico.
+- No volver a elevar privilegios en cada arranque.
+- Requerir una operación explícita y autorizada para crear o recuperar el primer superadministrador.
+- Exigir cambio de la contraseña temporal si el procedimiento utiliza credenciales iniciales temporales.
+
+## 5.3. Sesiones
+
+Utilizar sesiones generadas y validadas en el servidor.
+
+Las cookies de sesión deben:
+
+- Usar `HttpOnly`.
+- Usar `Secure` en producción bajo HTTPS.
+- Aplicar `SameSite` de acuerdo con el flujo de autenticación.
+- Tener una caducidad definida.
+- Poder revocarse.
+- Renovarse de forma segura cuando proceda.
+
+Nunca aceptar una identidad o un rol de superadministrador enviados por el navegador como prueba de autorización.
+
+## 5.4. Protección del acceso
+
+Implementar:
+
+- Límites de intentos.
+- Limitación de frecuencia por cuenta y origen cuando sea viable.
+- Mensajes seguros ante errores.
+- Registro de intentos relevantes.
+- Protección contra CSRF cuando corresponda al mecanismo de sesión.
+- Validación de origen en operaciones sensibles.
+- Cierre de sesión real en el servidor.
+- Revocación de sesiones en caso de cambio de contraseña o incidente.
+
+Las limitaciones deben diseñarse para no bloquear de forma permanente al administrador legítimo. Toda recuperación privilegiada debe seguir un procedimiento verificado.
+
+---
+
+# 6. CAMBIO DE CONTRASEÑA DEL SUPERADMINISTRADOR
+
+Esta función debe existir desde el inicio, no dejarse para una fase futura.
+
+Ruta:
+
+`/superadmin/cambiar-contrasena`
+
+## 6.1. Formulario
+
+Campos:
+
+1. Contraseña actual.
+2. Nueva contraseña.
+3. Confirmación de nueva contraseña.
+
+Incluir mostrar/ocultar contraseña, validación y mensajes traducidos.
+
+No enviar ni conservar las contraseñas en `localStorage`, `sessionStorage`, URLs, logs o campos ocultos.
+
+## 6.2. Validaciones
+
+El servidor deberá:
+
+- Comprobar la sesión.
+- Comprobar que el usuario sigue siendo superadministrador.
+- Verificar la contraseña actual.
+- Aplicar la política de contraseñas.
+- Comprobar que la confirmación coincide.
+- Impedir la reutilización inmediata de la contraseña actual.
+- Calcular el hash seguro de la nueva contraseña.
+- Guardar el nuevo hash en PostgreSQL.
+- Revocar o renovar las sesiones conforme a una política segura.
+- Registrar la operación en la auditoría sin guardar secretos.
+
+Si la actualización falla, no indicar que el cambio se ha realizado.
+
+## 6.3. Primer acceso
+
+Si el superadministrador necesita cambiar una contraseña temporal, dirigirlo al proceso obligatorio correspondiente antes de habilitar el resto del panel.
+
+El cambio de contraseña no debe permitir a un usuario normal obtener privilegios administrativos.
+
+---
+
+# 7. BACKEND DEL SUPERADMINISTRADOR
+
+El backend debe ejecutar la lógica comercial y administrativa en el servidor.
+
+Puede utilizar Route Handlers y servicios de dominio. Organiza los endpoints de acuerdo con la arquitectura existente.
+
+Ejemplos de rutas:
+
+- `/api/superadmin/dashboard`
+- `/api/superadmin/users`
+- `/api/superadmin/tenants`
+- `/api/superadmin/modules`
+- `/api/superadmin/plans`
+- `/api/superadmin/prices`
+- `/api/superadmin/discounts`
+- `/api/superadmin/subscriptions`
+- `/api/superadmin/payments`
+- `/api/superadmin/licenses`
+- `/api/superadmin/plugins`
+- `/api/superadmin/themes`
+- `/api/superadmin/importers`
+- `/api/superadmin/settings`
+- `/api/superadmin/locales`
+- `/api/superadmin/audit`
+- `/api/superadmin/health`
+
+Utilizar operaciones HTTP coherentes. Para recursos individuales pueden crearse rutas con identificador, por ejemplo `/api/superadmin/modules/[id]`.
+
+## 7.1. Controles comunes de cada endpoint
+
+Cada operación deberá:
+
+1. Comprobar la sesión en el servidor.
+2. Verificar el permiso exacto para esa operación.
+3. Validar los parámetros, los campos y los tipos de datos.
+4. Aplicar las reglas de negocio.
+5. Ejecutar las consultas mediante Prisma.
+6. Utilizar transacciones cuando sean necesarias.
+7. Registrar operaciones administrativas sensibles.
+8. Devolver una respuesta consistente.
+9. Evitar revelar trazas internas o secretos en producción.
+10. Aplicar límites de frecuencia y controles contra abuso cuando corresponda.
+
+No basta con ocultar páginas en el frontend. Un usuario sin permisos no debe poder operar directamente contra las API.
+
+## 7.2. Formato de respuesta
+
+Usar un contrato coherente, por ejemplo:
+
+`{ "ok": true, "data": ... }`
+
+o
+
+`{ "ok": false, "error": { "code": "...", "message": "..." } }`
+
+Es un ejemplo del formato lógico: adapta el esquema para que sea tipado, validado y uniforme. No devolver datos internos innecesarios.
+
+## 7.3. Errores
+
+Definir respuestas apropiadas para:
+
+- No autenticado.
+- Sin permisos.
+- Datos inválidos.
+- Recurso inexistente.
+- Conflicto con una restricción única.
+- Estado comercial incompatible.
+- Límite alcanzado.
+- Base de datos no disponible.
+- Error inesperado.
+
+No devolver el mensaje bruto de Prisma, credenciales ni trazas completas al usuario.
+
+---
+
+# 8. GESTIÓN ADMINISTRATIVA Y DATOS COMERCIALES
+
+Preparar el esquema y las funciones administrativas necesarias para que las fases siguientes puedan conectar los módulos sin rediseñar la plataforma.
+
+## 8.1. Usuarios y clientes
+
+El superadministrador deberá disponer de una estructura que permita consultar:
+
+- Identificador.
+- Nombre.
+- Correo electrónico.
+- Estado de la cuenta.
+- Fecha de creación.
+- Fecha de último acceso, cuando esté disponible.
+- Tenants vinculados.
+- Rol o roles.
+- Estado de verificación del correo, cuando proceda.
+
+Debe poder consultar, crear o gestionar cuentas conforme a los permisos definidos.
+
+No exponer hashes de contraseñas, tokens de recuperación ni secretos.
+
+## 8.2. Tenants y dominios
+
+Cada tenant tendrá identidad y estado propios.
+
+Preparar campos para:
+
+- Identificador interno.
+- Nombre.
+- Slug único.
+- Propietario.
+- Estado.
+- Dominio principal.
+- Dominios adicionales.
+- Fecha de creación.
+- Configuración regional.
+- Módulos autorizados.
+
+Los dominios deben tener estados verificables: pendiente, verificado, activo o rechazado, según el proceso implementado.
+
+La asignación de un dominio a un tenant debe protegerse con restricciones de unicidad y comprobaciones de titularidad. No basta con aceptar el hostname que mande el navegador.
+
+## 8.3. Catálogo de módulos
+
+Crear el catálogo inicial con los siguientes identificadores estables:
+
+- `blog`
+- `ecommerce`
+- `real_estate`
+- `auction`
+- `classifieds`
+- `personal_ads`
+
+Cada módulo debe poder tener:
+
+- Código único.
+- Nombre traducible.
+- Descripción traducible.
+- Estado de publicación.
+- Versión del módulo.
+- Requisitos o compatibilidades.
+- Identificador interno.
+- Fecha de creación y modificación.
+
+El catálogo no debe contener lógica que obligue a seleccionar un único módulo por cliente.
+
+Preparar el diseño para nuevos módulos sin tener que alterar el modelo central de usuario, tenant o suscripción cada vez que se añada uno.
+
+## 8.4. Planes y combinaciones
+
+Un plan puede agrupar varios módulos. El sistema también debe permitir que un cliente configure una combinación personalizada de módulos cuando esa opción comercial esté habilitada.
+
+Ejemplos:
+
+- Solo blog.
+- Blog más e-commerce.
+- Blog más anuncios.
+- E-commerce más inmobiliaria.
+- Blog, e-commerce y subastas.
+
+Los ejemplos anteriores son combinaciones de referencia, no ofertas con precios predeterminados.
+
+## 8.5. Precios y periodicidades
+
+El modelo comercial debe admitir configuraciones para:
+
+- Mensual.
+- Trimestral.
+- Semestral.
+- Anual.
+
+El superadministrador podrá configurar precios, moneda, vigencia y disponibilidad. También debe poder definir descuentos porcentuales o fijos cuando corresponda.
+
+Guardar la configuración de precios de forma que se pueda determinar qué tarifa se aplicaba a una compra anterior. No recalcular una factura histórica con el precio actual del catálogo.
+
+El importe final siempre debe calcularse en el servidor utilizando los registros oficiales de módulos, tarifas, periodicidad y descuentos.
+
+Las reglas de apilamiento de descuentos y las incompatibilidades entre ofertas deben ser explícitas y comprobadas.
+
+## 8.6. Suscripciones, pagos y licencias
+
+Definir la estructura necesaria para gestionar estos recursos:
+
+- Suscripción y estado.
+- Inicio y fin del periodo.
+- Periodicidad contratada.
+- Módulos incluidos.
+- Precio acordado.
+- Historial de cambios.
+- Pagos asociados.
+- Licencia y estado.
+- Activaciones y límites aplicables.
+
+No marcar un pago como confirmado porque el navegador vuelva a una página de éxito.
+
+La verificación real de proveedores y el tratamiento completo de webhooks deben implementarse de forma segura cuando corresponda a la fase de pagos. Mientras esa integración no exista, mostrar el estado real, por ejemplo, «No configurado», «Pendiente» o «No verificado». Nunca fingir una confirmación.
+
+## 8.7. Catálogos de plugins, temas e importadores
+
+Preparar los recursos administrativos para registrar y gestionar metadatos de extensiones.
+
+Cada elemento podrá incluir:
+
+- Identificador.
+- Nombre y descripción traducibles.
+- Tipo.
+- Versión.
+- Estado.
+- Compatibilidad.
+- Precio o licencia, si corresponde.
+- Dependencias.
+- Fecha de creación.
+
+Esta fase no debe recuperar ni instalar los plugins o temas antiguos. El motor seguro de carga, validación, instalación, actualización y ejecución de extensiones se desarrollará en su fase específica.
+
+No ejecutar código arbitrario subido por un usuario como si fuera confiable.
+
+---
+
+# 9. BASE DE DATOS INICIAL
+
+Diseñar el esquema Prisma de acuerdo con los requisitos anteriores.
+
+Considerar, como mínimo, las entidades conceptuales siguientes:
+
+- `User`
+- `Session`
+- `PasswordResetToken`
+- `Tenant`
+- `TenantMembership`
+- `TenantDomain`
+- `ModuleDefinition`
+- `Plan`
+- `PlanModule`
+- `ModulePrice`
+- `DiscountRule`
+- `Subscription`
+- `SubscriptionItem`
+- `Payment`
+- `PaymentEvent`
+- `License`
+- `LicenseActivation`
+- `PluginCatalogItem`
+- `ThemeCatalogItem`
+- `ImporterCatalogItem`
+- `PlatformSetting`
+- `AuditLog`
+
+Añadir las relaciones y tablas auxiliares que sean realmente necesarias.
+
+No crees tablas redundantes únicamente para seguir literalmente esta lista. Justifica los nombres y relaciones finales.
+
+## 9.1. Restricciones e índices
+
+Definir, según el recurso:
+
+- IDs estables.
+- Claves foráneas.
+- Índices de consultas frecuentes.
+- Unicidad para correo normalizado, slug, dominio, código de módulo y otros identificadores únicos.
+- Campos de fecha de creación y actualización.
+- Estados con valores definidos y validados.
+- Estrategia para desactivar registros sin destruir indebidamente el historial.
+
+No depender exclusivamente de comprobaciones en el frontend para evitar datos duplicados.
+
+## 9.2. Migraciones
+
+Preparar migraciones reversibles cuando sea técnicamente viable y siempre documentadas.
+
+Ejecutar las migraciones contra una base de datos de desarrollo controlada. Antes de migrar una base existente, identificar el estado de las tablas y sus datos.
+
+No ejecutar `DROP DATABASE`, `DROP SCHEMA` ni borrados masivos para resolver conflictos.
+
+No asumir que una base de datos está vacía sin comprobarlo.
+
+---
+
+# 10. SISTEMA MULTIIDIOMA DESDE EL PRINCIPIO
+
+Idiomas obligatorios:
+
+- Español: `es`
+- Francés: `fr`
+- Italiano: `it`
+- Portugués: `pt`
+- Alemán: `de`
+- Inglés: `en`
+- Criollo haitiano: `ht`
+
+El español será el idioma predeterminado inicial.
+
+## 10.1. Cobertura de traducción
+
+Traducir desde esta fase:
+
+- Inicio de sesión.
+- Cambio de contraseña.
+- Menús.
+- Dashboard.
+- Usuarios.
+- Clientes.
+- Tenants y dominios.
+- Formularios.
+- Validaciones.
+- Estados.
+- Mensajes de error.
+- Mensajes de éxito.
+- Confirmaciones.
+- Paginación.
+- Configuración.
+- Auditoría.
+- Estados vacíos y de carga.
+
+Los módulos futuros deberán cumplir la misma política.
+
+No dejar textos de interfaz incrustados directamente en los componentes cuando deban traducirse.
+
+## 10.2. Archivos de traducción
+
+Organizar catálogos de mensajes por idioma. Puede utilizarse `next-intl` u otra solución compatible, siempre que se documente la decisión.
+
+Crear comprobaciones automáticas de las claves:
+
+- Detectar claves faltantes.
+- Detectar claves duplicadas cuando proceda.
+- Detectar referencias inexistentes.
+- Impedir que falte una traducción básica en el idioma admitido.
+
+Para esta fase se deben proporcionar traducciones reales y coherentes de los textos implementados. No copiar sin más los textos españoles en los otros seis idiomas.
+
+## 10.3. Preferencia del usuario
+
+Persistir el idioma elegido mediante el perfil del usuario o una preferencia segura.
+
+Un cambio

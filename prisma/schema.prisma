@@ -1,0 +1,438 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum UserRole {
+  SUPERADMIN
+  CLIENT
+  TENANT_ADMIN
+  TENANT_STAFF
+  CUSTOMER
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+  ARCHIVED
+}
+
+enum TenantStatus {
+  ACTIVE
+  TRIAL
+  SUSPENDED
+  CANCELED
+}
+
+enum DomainStatus {
+  ACTIVE
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ModuleStatus {
+  PUBLISHED
+  DRAFT
+  DEPRECATED
+}
+
+enum PlanStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum BillingCycle {
+  MONTHLY
+  QUARTERLY
+  SEMIANNUAL
+  ANNUAL
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  SUCCEEDED
+  PENDING
+  FAILED
+  REFUNDED
+}
+
+enum LicenseStatus {
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  REVOKED
+}
+
+enum ExtensionStatus {
+  PUBLISHED
+  REVIEW
+  DEPRECATED
+  BETA
+}
+
+model User {
+  id                 String           @id @default(cuid())
+  email              String           @unique
+  passwordHash       String
+  name               String
+  role               UserRole         @default(CLIENT)
+  status             AccountStatus    @default(ACTIVE)
+  mustChangePassword Boolean          @default(false)
+  emailVerified      Boolean          @default(false)
+  lastLoginAt        DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  sessions           Session[]
+  passwordResets     PasswordResetToken[]
+  ownedTenants       Tenant[]         @relation("TenantOwner")
+  memberships        TenantMembership[]
+  auditLogs          AuditLog[]
+
+  @@index([email])
+  @@index([role, status])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([token])
+}
+
+model Tenant {
+  id            String          @id @default(cuid())
+  name          String
+  slug          String          @unique
+  ownerId       String
+  owner         User            @relation("TenantOwner", fields: [ownerId], references: [id])
+  status        TenantStatus    @default(TRIAL)
+  defaultLocale String          @default("es")
+  primaryDomain String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  domains       TenantDomain[]
+  memberships   TenantMembership[]
+  subscriptions Subscription[]
+  payments      Payment[]
+  licenses      License[]
+
+  @@index([slug])
+  @@index([status])
+}
+
+model TenantMembership {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String   @default("ADMIN") // OWNER, ADMIN, MANAGER, EDITOR
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, userId])
+}
+
+model TenantDomain {
+  id        String       @id @default(cuid())
+  tenantId  String
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain    String       @unique
+  status    DomainStatus @default(PENDING)
+  isPrimary Boolean      @default(false)
+  sslStatus String       @default("PENDING") // PENDING, ACTIVE, FAILED
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@index([domain])
+  @@index([tenantId])
+}
+
+model ModuleDefinition {
+  id          String       @id @default(cuid())
+  code        String       @unique // blog, ecommerce, real_estate, auction, classifieds, personal_ads
+  name        String
+  description String
+  category    String       @default("core")
+  version     String       @default("1.0.0")
+  status      ModuleStatus @default(PUBLISHED)
+  isCore      Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  planModules PlanModule[]
+  prices      ModulePrice[]
+
+  @@index([code])
+  @@index([status])
+}
+
+model Plan {
+  id          String       @id @default(cuid())
+  code        String       @unique
+  name        String
+  description String
+  isCustom    Boolean      @default(false)
+  status      PlanStatus   @default(ACTIVE)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  planModules   PlanModule[]
+  modulePrices  ModulePrice[]
+  subscriptions Subscription[]
+
+  @@index([code])
+}
+
+model PlanModule {
+  id       String           @id @default(cuid())
+  planId   String
+  plan     Plan             @relation(fields: [planId], references: [id], onDelete: Cascade)
+  moduleId String
+  module   ModuleDefinition @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, moduleId])
+}
+
+model ModulePrice {
+  id           String           @id @default(cuid())
+  moduleId     String?
+  module       ModuleDefinition? @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  planId       String?
+  plan         Plan?            @relation(fields: [planId], references: [id], onDelete: Cascade)
+  billingCycle BillingCycle     @default(MONTHLY)
+  price        Float
+  currency     String           @default("EUR")
+  isActive     Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+
+  @@index([billingCycle])
+}
+
+model DiscountRule {
+  id         String       @id @default(cuid())
+  code       String       @unique
+  name       String
+  type       DiscountType @default(PERCENTAGE)
+  value      Float
+  appliesTo  String       @default("ALL") // ALL, MODULE, PLAN
+  startDate  DateTime?
+  endDate    DateTime?
+  maxUses    Int?
+  usedCount  Int          @default(0)
+  isActive   Boolean      @default(true)
+  createdAt  DateTime     @default(now())
+
+  @@index([code])
+  @@index([isActive])
+}
+
+model Subscription {
+  id                 String             @id @default(cuid())
+  tenantId           String
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId             String?
+  plan               Plan?              @relation(fields: [planId], references: [id])
+  status             SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  billingCycle       BillingCycle       @default(MONTHLY)
+  price              Float
+  currency           String             @default("EUR")
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  items    SubscriptionItem[]
+  payments Payment[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model SubscriptionItem {
+  id             String       @id @default(cuid())
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  moduleCode     String
+  price          Float
+  createdAt      DateTime     @default(now())
+
+  @@index([subscriptionId])
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+  amount         Float
+  currency       String        @default("EUR")
+  status         PaymentStatus @default(PENDING)
+  provider       String        @default("STRIPE") // STRIPE, REDSYS, BIZUM, MANUAL
+  transactionId  String?
+  createdAt      DateTime      @default(now())
+
+  events PaymentEvent[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model PaymentEvent {
+  id        String   @id @default(cuid())
+  paymentId String
+  payment   Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  eventType String
+  payload   String   // JSON payload string
+  createdAt DateTime @default(now())
+
+  @@index([paymentId])
+}
+
+model License {
+  id          String        @id @default(cuid())
+  tenantId    String
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  licenseKey  String        @unique
+  status      LicenseStatus @default(ACTIVE)
+  maxTenants  Int           @default(1)
+  maxDomains  Int           @default(3)
+  issuedAt    DateTime      @default(now())
+  expiresAt   DateTime?
+  updatedAt   DateTime      @updatedAt
+
+  activations LicenseActivation[]
+
+  @@index([licenseKey])
+}
+
+model LicenseActivation {
+  id              String    @id @default(cuid())
+  licenseId       String
+  license         License   @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+  domain          String
+  ipAddress       String?
+  activatedAt     DateTime  @default(now())
+  lastHeartbeatAt DateTime?
+
+  @@index([licenseId])
+}
+
+model PluginCatalogItem {
+  id            String          @id @default(cuid())
+  slug          String          @unique
+  name          String
+  description   String
+  version       String          @default("1.0.0")
+  status        ExtensionStatus @default(PUBLISHED)
+  category      String          @default("general")
+  price         Float           @default(0.0)
+  isFree        Boolean         @default(true)
+  author        String          @default("FenixCMS Core")
+  minCmsVersion String          @default("1.0.0")
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([slug])
+}
+
+model ThemeCatalogItem {
+  id            String          @id @default(cuid())
+  slug          String          @unique
+  name          String
+  description   String
+  version       String          @default("1.0.0")
+  status        ExtensionStatus @default(PUBLISHED)
+  category      String          @default("ecommerce")
+  price         Float           @default(0.0)
+  isFree        Boolean         @default(true)
+  author        String          @default("FenixCMS Design")
+  previewImage  String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([slug])
+}
+
+model ImporterCatalogItem {
+  id             String          @id @default(cuid())
+  slug           String          @unique
+  name           String
+  sourcePlatform String          // WORDPRESS, SHOPIFY, PRESTASHOP, WOOCOMMERCE, MAGENTO
+  description    String
+  version        String          @default("1.0.0")
+  status         ExtensionStatus @default(PUBLISHED)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([slug])
+}
+
+model PlatformSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  category    String   @default("general")
+  isEncrypted Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userEmail  String?
+  action     String   // LOGIN, LOGOUT, CREATE, UPDATE, DELETE, PASSWORD_CHANGE, LICENSE_REVOKE
+  resource   String   // User, Tenant, Module, Plan, Subscription, Setting
+  resourceId String?
+  details    String?  // JSON details string
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
+}

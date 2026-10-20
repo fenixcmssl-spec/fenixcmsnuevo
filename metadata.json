@@ -1,0 +1,6 @@
+{
+  "name": "FenixCMS - Plataforma SaaS Multi-Tenant y Tienda Online",
+  "description": "FenixCMS: CMS SaaS multi-dominio, multi-idioma (7 idiomas), catálogo de módulos, plugins, temas y tienda online e-commerce integrada.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
