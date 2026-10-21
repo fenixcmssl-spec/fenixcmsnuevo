@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { repo } from '@/lib/db/repository';
+import { prisma, checkDatabaseHealth } from '@/lib/db/prisma';
 import { verifyPassword, hashPassword, validatePasswordStrength } from '@/lib/auth/passwords';
 import { requireSuperadmin } from '@/lib/auth/session';
 
@@ -8,6 +8,14 @@ export async function POST(req: NextRequest) {
     const authCheck = await requireSuperadmin(req);
     if (authCheck instanceof Response) return authCheck;
     const { user } = authCheck;
+
+    const dbHealth = await checkDatabaseHealth();
+    if (!dbHealth.isHealthy) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'DATABASE_UNAVAILABLE', message: 'Base de datos no disponible.' } },
+        { status: 503 }
+      );
+    }
 
     const body = await req.json();
     const { currentPassword, newPassword, confirmPassword } = body;
@@ -26,18 +34,40 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify current password
-    const isCurrentValid = await verifyPassword(currentPassword, user.passwordHash);
+    // Retrieve fresh user record from PostgreSQL
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+    });
+
+    if (!dbUser) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'USER_NOT_FOUND', message: 'Usuario no encontrado.' } },
+        { status: 404 }
+      );
+    }
+
+    // 1. Verify current password
+    const isCurrentValid = await verifyPassword(currentPassword, dbUser.passwordHash);
     if (!isCurrentValid) {
-      repo.logAudit(user.id, user.email, 'PASSWORD_CHANGE_FAILED', 'User', user.id, { reason: 'CURRENT_PASSWORD_INCORRECT' });
+      await prisma.auditLog.create({
+        data: {
+          userId: user.id,
+          userEmail: user.email,
+          action: 'PASSWORD_CHANGE_FAILED',
+          resource: 'User',
+          resourceId: user.id,
+          details: JSON.stringify({ reason: 'CURRENT_PASSWORD_INCORRECT' }),
+        },
+      }).catch(() => {});
+
       return NextResponse.json(
         { ok: false, error: { code: 'INVALID_CURRENT_PASSWORD', message: 'La contraseña actual no es correcta.' } },
         { status: 400 }
       );
     }
 
-    // Prevent immediate reuse
-    const isReused = await verifyPassword(newPassword, user.passwordHash);
+    // 2. Prevent immediate password reuse
+    const isReused = await verifyPassword(newPassword, dbUser.passwordHash);
     if (isReused) {
       return NextResponse.json(
         { ok: false, error: { code: 'PASSWORD_REUSED', message: 'La nueva contraseña no puede ser igual a la anterior.' } },
@@ -45,7 +75,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate strength
+    // 3. Validate password strength
     const strengthCheck = validatePasswordStrength(newPassword);
     if (!strengthCheck.isValid) {
       return NextResponse.json(
@@ -54,20 +84,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Hash and save
+    // 4. Hash and persist in PostgreSQL
     const newHash = await hashPassword(newPassword);
-    user.passwordHash = newHash;
-    user.mustChangePassword = false;
-    user.updatedAt = new Date().toISOString();
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: newHash,
+        mustChangePassword: false,
+      },
+    });
 
-    repo.logAudit(user.id, user.email, 'PASSWORD_CHANGED', 'User', user.id, { status: 'SUCCESS' });
+    // 5. Audit log without sensitive payload
+    await prisma.auditLog.create({
+      data: {
+        userId: user.id,
+        userEmail: user.email,
+        action: 'PASSWORD_CHANGED',
+        resource: 'User',
+        resourceId: user.id,
+        details: JSON.stringify({ status: 'SUCCESS' }),
+      },
+    }).catch(() => {});
 
     return NextResponse.json({
       ok: true,
-      message: 'Contraseña actualizada con éxito.',
+      data: { message: 'Contraseña actualizada con éxito.' },
     });
-  } catch (error) {
-    console.error('Password change error:', error);
+  } catch {
     return NextResponse.json(
       { ok: false, error: { code: 'INTERNAL_ERROR', message: 'Error interno al actualizar la contraseña.' } },
       { status: 500 }

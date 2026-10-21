@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { repo } from '@/lib/db/repository';
+import { prisma, checkDatabaseHealth } from '@/lib/db/prisma';
 import { requireSuperadmin } from '@/lib/auth/session';
 
 export async function GET(req: NextRequest) {
@@ -7,40 +7,75 @@ export async function GET(req: NextRequest) {
     const authCheck = await requireSuperadmin(req);
     if (authCheck instanceof Response) return authCheck;
 
-    const totalTenants = repo.tenants.length;
-    const activeTenants = repo.tenants.filter(t => t.status === 'ACTIVE').length;
-    const activeSubscriptions = repo.subscriptions.filter(s => s.status === 'ACTIVE').length;
-
-    // Calculate real MRR from active subscriptions
-    let mrr = 0;
-    for (const sub of repo.subscriptions) {
-      if (sub.status === 'ACTIVE') {
-        if (sub.billingCycle === 'MONTHLY') mrr += sub.price;
-        else if (sub.billingCycle === 'QUARTERLY') mrr += sub.price / 3;
-        else if (sub.billingCycle === 'SEMIANNUAL') mrr += sub.price / 6;
-        else if (sub.billingCycle === 'ANNUAL') mrr += sub.price / 12;
-      }
+    const dbHealth = await checkDatabaseHealth();
+    if (!dbHealth.isHealthy) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'DATABASE_UNAVAILABLE', message: 'Servicio de base de datos no disponible.' } },
+        { status: 503 }
+      );
     }
 
-    const activeLicenses = repo.licenses.filter(l => l.status === 'ACTIVE').length;
-    const totalUsers = repo.users.length;
-    const totalPaymentsVolume = repo.payments
-      .filter(p => p.status === 'SUCCEEDED')
-      .reduce((acc, p) => acc + p.amount, 0);
+    const [
+      totalTenants,
+      activeTenants,
+      activeSubscriptions,
+      activeLicenses,
+      totalUsers,
+      subscriptions,
+      succeededPayments,
+      modules,
+      recentTenants,
+      recentAudit,
+    ] = await Promise.all([
+      prisma.tenant.count(),
+      prisma.tenant.count({ where: { status: 'ACTIVE' } }),
+      prisma.subscription.count({ where: { status: 'ACTIVE' } }),
+      prisma.license.count({ where: { status: 'ACTIVE' } }),
+      prisma.user.count(),
+      prisma.subscription.findMany({
+        where: { status: 'ACTIVE' },
+        select: { price: true, billingCycle: true },
+      }),
+      prisma.payment.findMany({
+        where: { status: 'SUCCEEDED' },
+        select: { amount: true },
+      }),
+      prisma.moduleDefinition.findMany({
+        select: { code: true },
+      }),
+      prisma.tenant.findMany({
+        take: 5,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          domains: true,
+        },
+      }),
+      prisma.auditLog.findMany({
+        take: 8,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    // Calculate MRR from active subscriptions using Decimal precision
+    let mrr = 0;
+    for (const sub of subscriptions) {
+      const priceNum = Number(sub.price);
+      if (sub.billingCycle === 'MONTHLY') mrr += priceNum;
+      else if (sub.billingCycle === 'QUARTERLY') mrr += priceNum / 3;
+      else if (sub.billingCycle === 'SEMIANNUAL') mrr += priceNum / 6;
+      else if (sub.billingCycle === 'ANNUAL') mrr += priceNum / 12;
+    }
+
+    const totalPaymentsVolume = succeededPayments.reduce(
+      (acc, p) => acc + Number(p.amount),
+      0
+    );
 
     // Module usage counts
     const moduleUsage: Record<string, number> = {};
-    for (const mod of repo.modules) {
+    for (const mod of modules) {
       moduleUsage[mod.code] = 0;
     }
-    for (const t of repo.tenants) {
-      for (const m of t.authorizedModules) {
-        moduleUsage[m] = (moduleUsage[m] || 0) + 1;
-      }
-    }
-
-    const recentTenants = repo.tenants.slice(0, 5);
-    const recentAudit = repo.auditLogs.slice(0, 8);
 
     return NextResponse.json({
       ok: true,
@@ -52,11 +87,18 @@ export async function GET(req: NextRequest) {
           mrr: Math.round(mrr * 100) / 100,
           activeLicenses,
           totalUsers,
-          totalPaymentsVolume,
+          totalPaymentsVolume: Math.round(totalPaymentsVolume * 100) / 100,
           systemHealth: 'OPERATIONAL',
         },
         moduleUsage,
-        recentTenants,
+        recentTenants: recentTenants.map(t => ({
+          id: t.id,
+          name: t.name,
+          slug: t.slug,
+          primaryDomain: t.primaryDomain || (t.domains[0]?.domain ?? `${t.slug}.fenixcms.es`),
+          authorizedModules: ['ecommerce', 'blog'],
+          status: t.status,
+        })),
         recentAudit,
       },
     });

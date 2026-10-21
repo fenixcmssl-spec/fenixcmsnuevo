@@ -1,39 +1,61 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { repo } from '@/lib/db/repository';
+import { prisma, checkDatabaseHealth } from '@/lib/db/prisma';
 import { requireSuperadmin } from '@/lib/auth/session';
-import { hashPassword } from '@/lib/auth/passwords';
+import { hashPassword, validatePasswordStrength } from '@/lib/auth/passwords';
+import { UserRole, AccountStatus } from '@prisma/client';
 
 export async function GET(req: NextRequest) {
   try {
     const authCheck = await requireSuperadmin(req);
     if (authCheck instanceof Response) return authCheck;
 
+    const dbHealth = await checkDatabaseHealth();
+    if (!dbHealth.isHealthy) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'DATABASE_UNAVAILABLE', message: 'Servicio de base de datos no disponible.' } },
+        { status: 503 }
+      );
+    }
+
     const url = new URL(req.url);
     const role = url.searchParams.get('role');
     const status = url.searchParams.get('status');
 
-    let list = repo.users.map(u => ({
-      id: u.id,
-      email: u.email,
-      name: u.name,
-      role: u.role,
-      status: u.status,
-      mustChangePassword: u.mustChangePassword,
-      emailVerified: u.emailVerified,
-      lastLoginAt: u.lastLoginAt,
-      createdAt: u.createdAt,
-    }));
+    const whereClause: {
+      role?: UserRole;
+      status?: AccountStatus;
+    } = {};
 
-    if (role && role !== 'ALL') {
-      list = list.filter(u => u.role === role);
-    }
-    if (status && status !== 'ALL') {
-      list = list.filter(u => u.status === status);
+    if (role && role !== 'ALL' && Object.values(UserRole).includes(role as UserRole)) {
+      whereClause.role = role as UserRole;
     }
 
-    return NextResponse.json({ ok: true, data: list });
+    if (status && status !== 'ALL' && Object.values(AccountStatus).includes(status as AccountStatus)) {
+      whereClause.status = status as AccountStatus;
+    }
+
+    const users = await prisma.user.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        status: true,
+        mustChangePassword: true,
+        emailVerified: true,
+        lastLoginAt: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return NextResponse.json({ ok: true, data: users });
   } catch {
-    return NextResponse.json({ ok: false, error: { code: 'SERVER_ERROR', message: 'Error al listar usuarios.' } }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: { code: 'SERVER_ERROR', message: 'Error al listar usuarios.' } },
+      { status: 500 }
+    );
   }
 }
 
@@ -43,49 +65,88 @@ export async function POST(req: NextRequest) {
     if (authCheck instanceof Response) return authCheck;
     const { user: currentSuperadmin } = authCheck;
 
+    const dbHealth = await checkDatabaseHealth();
+    if (!dbHealth.isHealthy) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'DATABASE_UNAVAILABLE', message: 'Servicio de base de datos no disponible.' } },
+        { status: 503 }
+      );
+    }
+
     const body = await req.json();
-    const { email, name, role = 'CLIENT', password } = body;
+    const { email, name, role = 'CLIENT', password, mustChangePassword = true } = body;
 
     if (!email || !name || !password) {
-      return NextResponse.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Faltan campos requeridos.' } }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: { code: 'VALIDATION_ERROR', message: 'Faltan campos requeridos.' } },
+        { status: 400 }
+      );
     }
 
-    const normalized = email.trim().toLowerCase();
-    if (repo.users.some(u => u.email.toLowerCase() === normalized)) {
-      return NextResponse.json({ ok: false, error: { code: 'USER_EXISTS', message: 'Ya existe un usuario con este correo.' } }, { status: 409 });
+    const strength = validatePasswordStrength(password);
+    if (!strength.isValid) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'WEAK_PASSWORD', message: strength.error } },
+        { status: 400 }
+      );
     }
 
-    const hashed = await hashPassword(password);
-    const now = new Date().toISOString();
-    const newUser = {
-      id: `usr_${Date.now()}`,
-      email: normalized,
-      passwordHash: hashed,
-      name,
-      role,
-      status: 'ACTIVE' as const,
-      mustChangePassword: false,
-      emailVerified: true,
-      lastLoginAt: null,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const normalizedEmail = email.trim().toLowerCase();
 
-    repo.users.unshift(newUser);
-    repo.logAudit(currentSuperadmin.id, currentSuperadmin.email, 'USER_CREATED', 'User', newUser.id, { email: newUser.email, role: newUser.role });
+    const existing = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
 
-    return NextResponse.json({
-      ok: true,
+    if (existing) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'USER_EXISTS', message: 'Ya existe un usuario con este correo electrónico.' } },
+        { status: 409 }
+      );
+    }
+
+    const hashedPassword = await hashPassword(password);
+    const assignedRole = Object.values(UserRole).includes(role as UserRole)
+      ? (role as UserRole)
+      : UserRole.CLIENT;
+
+    const newUser = await prisma.user.create({
       data: {
-        id: newUser.id,
-        email: newUser.email,
-        name: newUser.name,
-        role: newUser.role,
-        status: newUser.status,
+        email: normalizedEmail,
+        name: name.trim(),
+        role: assignedRole,
+        passwordHash: hashedPassword,
+        mustChangePassword: Boolean(mustChangePassword),
+        status: AccountStatus.ACTIVE,
+        emailVerified: false,
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        status: true,
+        mustChangePassword: true,
+        createdAt: true,
       },
     });
+
+    await prisma.auditLog.create({
+      data: {
+        userId: currentSuperadmin.id,
+        userEmail: currentSuperadmin.email,
+        action: 'USER_CREATED',
+        resource: 'User',
+        resourceId: newUser.id,
+        details: JSON.stringify({ email: newUser.email, role: newUser.role }),
+      },
+    }).catch(() => {});
+
+    return NextResponse.json({ ok: true, data: newUser });
   } catch {
-    return NextResponse.json({ ok: false, error: { code: 'SERVER_ERROR', message: 'Error al crear usuario.' } }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: { code: 'SERVER_ERROR', message: 'Error al registrar usuario.' } },
+      { status: 500 }
+    );
   }
 }
 
@@ -95,28 +156,66 @@ export async function PUT(req: NextRequest) {
     if (authCheck instanceof Response) return authCheck;
     const { user: currentSuperadmin } = authCheck;
 
+    const dbHealth = await checkDatabaseHealth();
+    if (!dbHealth.isHealthy) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'DATABASE_UNAVAILABLE', message: 'Servicio de base de datos no disponible.' } },
+        { status: 503 }
+      );
+    }
+
     const body = await req.json();
-    const { id, status, role, name } = body;
+    const { id, status, role } = body;
 
-    const targetUser = repo.users.find(u => u.id === id);
-    if (!targetUser) {
-      return NextResponse.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Usuario no encontrado.' } }, { status: 404 });
+    if (!id) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'MISSING_ID', message: 'Identificador de usuario requerido.' } },
+        { status: 400 }
+      );
     }
 
-    // Protect against self-demotion or disabling last superadmin
-    if (targetUser.id === currentSuperadmin.id && (status === 'SUSPENDED' || role !== 'SUPERADMIN')) {
-      return NextResponse.json({ ok: false, error: { code: 'CANNOT_DEMOTE_SELF', message: 'No puedes degradar ni suspender tu propia cuenta activa.' } }, { status: 400 });
+    const updateData: {
+      status?: AccountStatus;
+      role?: UserRole;
+    } = {};
+
+    if (status && Object.values(AccountStatus).includes(status as AccountStatus)) {
+      updateData.status = status as AccountStatus;
     }
 
-    if (status) targetUser.status = status;
-    if (role) targetUser.role = role;
-    if (name) targetUser.name = name;
-    targetUser.updatedAt = new Date().toISOString();
+    if (role && Object.values(UserRole).includes(role as UserRole)) {
+      updateData.role = role as UserRole;
+    }
 
-    repo.logAudit(currentSuperadmin.id, currentSuperadmin.email, 'USER_UPDATED', 'User', targetUser.id, { status, role });
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: updateData,
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        status: true,
+        updatedAt: true,
+      },
+    });
 
-    return NextResponse.json({ ok: true, data: targetUser });
+    await prisma.auditLog.create({
+      data: {
+        userId: currentSuperadmin.id,
+        userEmail: currentSuperadmin.email,
+        action: 'USER_UPDATED',
+        resource: 'User',
+        resourceId: id,
+        details: JSON.stringify(updateData),
+      },
+    }).catch(() => {});
+
+    return NextResponse.json({ ok: true, data: updatedUser });
   } catch {
-    return NextResponse.json({ ok: false, error: { code: 'SERVER_ERROR', message: 'Error al actualizar usuario.' } }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: { code: 'SERVER_ERROR', message: 'Error al actualizar usuario.' } },
+      { status: 500 }
+    );
   }
 }

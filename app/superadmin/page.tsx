@@ -45,9 +45,7 @@ export default function SuperadminDashboard() {
       { id: 'ten_latotaltienda', name: 'La Total Tienda', slug: 'latotaltienda', primaryDomain: 'latotaltienda.es', authorizedModules: ['ecommerce', 'blog'], status: 'ACTIVE' },
       { id: 'ten_modaboutique', name: 'Moda Boutique París', slug: 'modaboutique', primaryDomain: 'modaboutique.com', authorizedModules: ['ecommerce'], status: 'ACTIVE' },
     ],
-    recentAudit: [
-      { id: 'aud_01', action: 'SUPERADMIN_INITIALIZED', resource: 'System', userEmail: 'admin@fenixcms.es', ipAddress: '127.0.0.1', createdAt: '2026-10-20T08:00:00.000Z' },
-    ],
+    recentAudit: [],
   });
   const [loading, setLoading] = useState(false);
 

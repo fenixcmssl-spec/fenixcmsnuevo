@@ -9,8 +9,8 @@ import { Flame, Eye, EyeOff, Lock, Mail, ShieldAlert, ArrowRight } from 'lucide-
 function LoginFormContent() {
   const router = useRouter();
   const { t } = useI18n();
-  const [email, setEmail] = useState('admin@fenixcms.es');
-  const [password, setPassword] = useState('Admin123!*Fenix');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -95,7 +95,7 @@ function LoginFormContent() {
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   required
-                  placeholder="admin@fenixcms.es"
+                  placeholder="superadmin@dominio.com"
                   className="w-full px-3.5 py-2.5 bg-neutral-900 border border-neutral-700 rounded-md text-xs sm:text-sm text-white focus:outline-none focus:border-[#D71920] focus:ring-1 focus:ring-[#D71920] pl-10"
                 />
                 <Mail className="w-4 h-4 text-neutral-400 absolute left-3.5 top-3" />
@@ -145,14 +145,6 @@ function LoginFormContent() {
               )}
             </button>
           </form>
-
-          {/* Seed credentials helper box for development and testing */}
-          <div className="mt-6 pt-4 border-t border-neutral-800 text-[11px] text-neutral-400">
-            <span className="font-semibold text-neutral-300">Credenciales del primer Superadmin:</span>
-            <div className="mt-1 font-mono text-neutral-300 bg-neutral-900 p-2 rounded border border-neutral-800">
-              admin@fenixcms.es / Admin123!*Fenix
-            </div>
-          </div>
         </div>
       </main>
 

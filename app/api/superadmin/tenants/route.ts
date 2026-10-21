@@ -1,33 +1,69 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { repo } from '@/lib/db/repository';
+import { prisma, checkDatabaseHealth } from '@/lib/db/prisma';
 import { requireSuperadmin } from '@/lib/auth/session';
+import { TenantStatus, UserRole, AccountStatus } from '@prisma/client';
+import { hashPassword } from '@/lib/auth/passwords';
+import crypto from 'crypto';
 
 export async function GET(req: NextRequest) {
   try {
     const authCheck = await requireSuperadmin(req);
     if (authCheck instanceof Response) return authCheck;
 
+    const dbHealth = await checkDatabaseHealth();
+    if (!dbHealth.isHealthy) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'DATABASE_UNAVAILABLE', message: 'Servicio de base de datos no disponible.' } },
+        { status: 503 }
+      );
+    }
+
     const url = new URL(req.url);
     const status = url.searchParams.get('status');
 
-    let list = repo.tenants.map(t => {
-      const domains = repo.tenantDomains.filter(d => d.tenantId === t.id);
-      const owner = repo.users.find(u => u.id === t.ownerId);
-      return {
-        ...t,
-        domains,
-        ownerEmail: owner?.email || 'N/A',
-        ownerName: owner?.name || 'N/A',
-      };
-    });
+    const whereClause: {
+      status?: TenantStatus;
+    } = {};
 
-    if (status && status !== 'ALL') {
-      list = list.filter(t => t.status === status);
+    if (status && status !== 'ALL' && Object.values(TenantStatus).includes(status as TenantStatus)) {
+      whereClause.status = status as TenantStatus;
     }
 
-    return NextResponse.json({ ok: true, data: list });
+    const tenants = await prisma.tenant.findMany({
+      where: whereClause,
+      include: {
+        domains: true,
+        owner: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const data = tenants.map(t => ({
+      id: t.id,
+      name: t.name,
+      slug: t.slug,
+      status: t.status,
+      defaultLocale: t.defaultLocale,
+      primaryDomain: t.primaryDomain || t.domains.find(d => d.isPrimary)?.domain || `${t.slug}.fenixcms.es`,
+      domains: t.domains,
+      ownerEmail: t.owner?.email || 'N/A',
+      ownerName: t.owner?.name || 'N/A',
+      authorizedModules: ['ecommerce', 'blog'],
+      createdAt: t.createdAt,
+    }));
+
+    return NextResponse.json({ ok: true, data });
   } catch {
-    return NextResponse.json({ ok: false, error: { code: 'SERVER_ERROR', message: 'Error al listar tenants.' } }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: { code: 'SERVER_ERROR', message: 'Error al listar tenants.' } },
+      { status: 500 }
+    );
   }
 }
 
@@ -37,104 +73,110 @@ export async function POST(req: NextRequest) {
     if (authCheck instanceof Response) return authCheck;
     const { user: currentSuperadmin } = authCheck;
 
+    const dbHealth = await checkDatabaseHealth();
+    if (!dbHealth.isHealthy) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'DATABASE_UNAVAILABLE', message: 'Servicio de base de datos no disponible.' } },
+        { status: 503 }
+      );
+    }
+
     const body = await req.json();
-    const { name, slug, ownerEmail, primaryDomain, defaultLocale = 'es', authorizedModules = ['ecommerce', 'blog'] } = body;
+    const { name, slug, ownerEmail, primaryDomain, defaultLocale = 'es' } = body;
 
     if (!name || !slug || !ownerEmail) {
-      return NextResponse.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Nombre, slug y correo del propietario son requeridos.' } }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: { code: 'VALIDATION_ERROR', message: 'Nombre, slug y correo del propietario son requeridos.' } },
+        { status: 400 }
+      );
     }
 
-    const cleanSlug = slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    if (repo.tenants.some(t => t.slug === cleanSlug)) {
-      return NextResponse.json({ ok: false, error: { code: 'SLUG_EXISTS', message: 'El slug ya está en uso por otro tenant.' } }, { status: 409 });
+    const cleanSlug = slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
+    const normalizedOwnerEmail = ownerEmail.trim().toLowerCase();
+
+    // Check slug uniqueness
+    const existingSlug = await prisma.tenant.findUnique({
+      where: { slug: cleanSlug },
+    });
+
+    if (existingSlug) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'SLUG_EXISTS', message: 'El slug ya está en uso por otro tenant.' } },
+        { status: 409 }
+      );
     }
 
-    // Check or create owner
-    let owner = repo.users.find(u => u.email.toLowerCase() === ownerEmail.trim().toLowerCase());
+    // Find or create owner user
+    let owner = await prisma.user.findUnique({
+      where: { email: normalizedOwnerEmail },
+    });
+
     if (!owner) {
-      owner = {
-        id: `usr_${Date.now()}`,
-        email: ownerEmail.trim().toLowerCase(),
-        passwordHash: '$2a$10$wT0lq7x5rGz6eH1xO.8YwOhW446gWwV6f5o1P8.F6zQ8pP.uI1Riy',
-        name: name + ' Admin',
-        role: 'CLIENT',
-        status: 'ACTIVE',
-        mustChangePassword: true,
-        emailVerified: true,
-        lastLoginAt: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      repo.users.push(owner);
-    }
-
-    const now = new Date().toISOString();
-    const tenantId = `ten_${Date.now()}`;
-    const newTenant = {
-      id: tenantId,
-      name,
-      slug: cleanSlug,
-      ownerId: owner.id,
-      status: 'ACTIVE' as const,
-      defaultLocale,
-      primaryDomain: primaryDomain || `${cleanSlug}.fenixcms.es`,
-      authorizedModules,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    repo.tenants.unshift(newTenant);
-
-    if (newTenant.primaryDomain) {
-      repo.tenantDomains.push({
-        id: `dom_${Date.now()}`,
-        tenantId: newTenant.id,
-        domain: newTenant.primaryDomain,
-        status: 'VERIFIED',
-        isPrimary: true,
-        sslStatus: 'ACTIVE',
-        createdAt: now,
-        updatedAt: now,
+      const randomTempSecret = crypto.randomBytes(24).toString('base64') + '!A1*';
+      const defaultHash = await hashPassword(randomTempSecret);
+      owner = await prisma.user.create({
+        data: {
+          email: normalizedOwnerEmail,
+          name: name.trim() + ' Admin',
+          role: UserRole.CLIENT,
+          status: AccountStatus.ACTIVE,
+          passwordHash: defaultHash,
+          mustChangePassword: true,
+          emailVerified: false,
+        },
       });
     }
 
-    // Create starter subscription
-    repo.subscriptions.unshift({
-      id: `sub_${Date.now()}`,
-      tenantId: newTenant.id,
-      planId: 'plan_pro_ecommerce',
-      planCode: 'pro_ecommerce',
-      status: 'ACTIVE',
-      currentPeriodStart: now,
-      currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      billingCycle: 'MONTHLY',
-      price: 49.0,
-      currency: 'EUR',
-      modules: authorizedModules,
-      createdAt: now,
-      updatedAt: now,
+    // Clean primary domain
+    const cleanPrimaryDomain = primaryDomain
+      ? primaryDomain.trim().toLowerCase().replace(/https?:\/\//, '').replace(/\/.*$/, '')
+      : `${cleanSlug}.fenixcms.es`;
+
+    // Create Tenant and primary TenantDomain in an atomic transaction
+    const newTenant = await prisma.$transaction(async tx => {
+      const created = await tx.tenant.create({
+        data: {
+          name: name.trim(),
+          slug: cleanSlug,
+          ownerId: owner.id,
+          status: TenantStatus.TRIAL,
+          defaultLocale,
+          primaryDomain: cleanPrimaryDomain,
+          domains: {
+            create: {
+              domain: cleanPrimaryDomain,
+              isPrimary: true,
+              status: 'VERIFIED',
+              sslStatus: 'ACTIVE',
+            },
+          },
+        },
+        include: {
+          domains: true,
+        },
+      });
+
+      return created;
     });
 
-    // Create license
-    repo.licenses.unshift({
-      id: `lic_${Date.now()}`,
-      tenantId: newTenant.id,
-      tenantName: newTenant.name,
-      licenseKey: `FNX-STD-2026-${cleanSlug.substring(0, 4).toUpperCase()}-${Math.floor(10000 + Math.random() * 90000)}`,
-      status: 'ACTIVE',
-      maxTenants: 1,
-      maxDomains: 3,
-      issuedAt: now,
-      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-      activationsCount: 1,
-      updatedAt: now,
-    });
-
-    repo.logAudit(currentSuperadmin.id, currentSuperadmin.email, 'TENANT_CREATED', 'Tenant', newTenant.id, { slug: newTenant.slug, name: newTenant.name });
+    await prisma.auditLog.create({
+      data: {
+        userId: currentSuperadmin.id,
+        userEmail: currentSuperadmin.email,
+        action: 'TENANT_CREATED',
+        resource: 'Tenant',
+        resourceId: newTenant.id,
+        details: JSON.stringify({ slug: cleanSlug, name, ownerEmail: normalizedOwnerEmail }),
+      },
+    }).catch(() => {});
 
     return NextResponse.json({ ok: true, data: newTenant });
-  } catch {
-    return NextResponse.json({ ok: false, error: { code: 'SERVER_ERROR', message: 'Error al registrar tenant.' } }, { status: 500 });
+  } catch (error) {
+    console.error('Create tenant error:', error);
+    return NextResponse.json(
+      { ok: false, error: { code: 'SERVER_ERROR', message: 'Error al registrar tenant.' } },
+      { status: 500 }
+    );
   }
 }
 
@@ -144,24 +186,57 @@ export async function PUT(req: NextRequest) {
     if (authCheck instanceof Response) return authCheck;
     const { user: currentSuperadmin } = authCheck;
 
-    const body = await req.json();
-    const { id, status, name, defaultLocale, authorizedModules } = body;
-
-    const tenant = repo.tenants.find(t => t.id === id);
-    if (!tenant) {
-      return NextResponse.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Tenant no encontrado.' } }, { status: 404 });
+    const dbHealth = await checkDatabaseHealth();
+    if (!dbHealth.isHealthy) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'DATABASE_UNAVAILABLE', message: 'Servicio de base de datos no disponible.' } },
+        { status: 503 }
+      );
     }
 
-    if (status) tenant.status = status;
-    if (name) tenant.name = name;
-    if (defaultLocale) tenant.defaultLocale = defaultLocale;
-    if (authorizedModules) tenant.authorizedModules = authorizedModules;
-    tenant.updatedAt = new Date().toISOString();
+    const body = await req.json();
+    const { id, status, name, defaultLocale } = body;
 
-    repo.logAudit(currentSuperadmin.id, currentSuperadmin.email, 'TENANT_UPDATED', 'Tenant', tenant.id, { status, authorizedModules });
+    if (!id) {
+      return NextResponse.json(
+        { ok: false, error: { code: 'MISSING_ID', message: 'Identificador de tenant requerido.' } },
+        { status: 400 }
+      );
+    }
 
-    return NextResponse.json({ ok: true, data: tenant });
+    const updateData: {
+      status?: TenantStatus;
+      name?: string;
+      defaultLocale?: string;
+    } = {};
+
+    if (status && Object.values(TenantStatus).includes(status as TenantStatus)) {
+      updateData.status = status as TenantStatus;
+    }
+    if (name) updateData.name = name.trim();
+    if (defaultLocale) updateData.defaultLocale = defaultLocale;
+
+    const updated = await prisma.tenant.update({
+      where: { id },
+      data: updateData,
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        userId: currentSuperadmin.id,
+        userEmail: currentSuperadmin.email,
+        action: 'TENANT_UPDATED',
+        resource: 'Tenant',
+        resourceId: id,
+        details: JSON.stringify(updateData),
+      },
+    }).catch(() => {});
+
+    return NextResponse.json({ ok: true, data: updated });
   } catch {
-    return NextResponse.json({ ok: false, error: { code: 'SERVER_ERROR', message: 'Error al actualizar tenant.' } }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: { code: 'SERVER_ERROR', message: 'Error al actualizar tenant.' } },
+      { status: 500 }
+    );
   }
 }

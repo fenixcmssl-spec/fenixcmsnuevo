@@ -11,7 +11,7 @@ interface UserAccountMenuProps {
   userName?: string;
 }
 
-export default function UserAccountMenu({ userEmail = 'admin@fenixcms.es', userName = 'Superadmin' }: UserAccountMenuProps) {
+export default function UserAccountMenu({ userEmail = '', userName = 'Superadmin' }: UserAccountMenuProps) {
   const { t } = useI18n();
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);

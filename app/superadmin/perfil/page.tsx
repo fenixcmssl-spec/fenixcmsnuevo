@@ -1,31 +1,61 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import SuperadminLayout from '@/components/superadmin/SuperadminLayout';
 import PageHeader from '@/components/superadmin/PageHeader';
 import StatusBadge from '@/components/superadmin/StatusBadge';
 import { useI18n } from '@/lib/i18n/context';
-import { ShieldCheck, User, Mail, Calendar, KeyRound } from 'lucide-react';
+import { ShieldCheck, KeyRound } from 'lucide-react';
 import Link from 'next/link';
+
+interface CurrentUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  mustChangePassword: boolean;
+}
 
 export default function PerfilPage() {
   const { t } = useI18n();
+  const [user, setUser] = useState<CurrentUser | null>(null);
+
+  useEffect(() => {
+    fetch('/api/superadmin/auth')
+      .then(res => res.json())
+      .then(data => {
+        if (data?.ok && data?.data?.user) {
+          setUser(data.data.user);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const displayName = user?.name || 'Superadministrador';
+  const displayEmail = user?.email || 'superadmin@fenixcms';
+  const initials = displayName
+    .split(' ')
+    .map(p => p[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase() || 'SA';
 
   return (
     <SuperadminLayout>
       <PageHeader
         title={t('header.profile')}
-        subtitle="Información de la cuenta con privilegios máximos del sistema FenixCMS."
+        subtitle="Información de la cuenta con privilegios del sistema FenixCMS."
         badge="Superadministrador"
       />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-1 bg-white rounded-lg border border-[#DDDDDD] p-6 shadow-xs text-center">
           <div className="w-20 h-20 rounded-full bg-[#111111] border-2 border-[#D71920] text-white flex items-center justify-center text-2xl font-bold mx-auto mb-4">
-            SA
+            {initials}
           </div>
-          <h2 className="text-base font-bold text-[#171717]">Superadministrador Principal</h2>
-          <p className="text-xs text-[#626262] mt-0.5">admin@fenixcms.es</p>
+          <h2 className="text-base font-bold text-[#171717]">{displayName}</h2>
+          <p className="text-xs text-[#626262] mt-0.5">{displayEmail}</p>
           <div className="mt-3">
             <StatusBadge status="ACTIVE" label="Activo" />
           </div>
@@ -51,13 +81,13 @@ export default function PerfilPage() {
               <span className="text-[#626262] block mb-1">Rol en Plataforma:</span>
               <span className="font-bold text-[#171717] flex items-center gap-1.5">
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                SUPERADMIN (Acceso Total)
+                {user?.role || 'SUPERADMIN'} (Acceso Administrativo)
               </span>
             </div>
 
             <div className="p-3 rounded bg-neutral-50 border border-neutral-200">
               <span className="text-[#626262] block mb-1">Mecanismo de Autenticación:</span>
-              <span className="font-bold text-[#171717]">Argon2id / bcrypt Hash + Cookie HttpOnly</span>
+              <span className="font-bold text-[#171717]">bcrypt Hash + Cookie HttpOnly (SHA-256 Token)</span>
             </div>
 
             <div className="p-3 rounded bg-neutral-50 border border-neutral-200">
@@ -66,8 +96,10 @@ export default function PerfilPage() {
             </div>
 
             <div className="p-3 rounded bg-neutral-50 border border-neutral-200">
-              <span className="text-[#626262] block mb-1">Último Acceso Registrado:</span>
-              <span className="font-bold text-[#171717]">2026-10-20 08:01:00 UTC</span>
+              <span className="text-[#626262] block mb-1">Obligación Cambio Contraseña:</span>
+              <span className="font-bold text-[#171717]">
+                {user?.mustChangePassword ? 'Requerido en próximo inicio' : 'Al día'}
+              </span>
             </div>
           </div>
         </div>
