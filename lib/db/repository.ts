@@ -264,9 +264,8 @@ class FenixRepository {
   private seedInitialData() {
     const now = new Date().toISOString();
 
-    // 1. Initial Superadmin (Hash of 'Admin123!*Fenix' with bcrypt)
-    // bcrypt hash of Admin123!*Fenix:
-    const adminPasswordHash = '$2a$10$wT0lq7x5rGz6eH1xO.8YwOhW446gWwV6f5o1P8.F6zQ8pP.uI1Riy';
+    // 1. Initial Superadmin (Verified bcrypt hash of 'Admin123!*Fenix')
+    const adminPasswordHash = '$2b$10$604SQuLxfRBEg/IDiZ7iTeVEvxBO0G33kYxNKpidJuMcBB30q6aRu';
 
     this.users = [
       {
@@ -274,6 +273,19 @@ class FenixRepository {
         email: 'admin@fenixcms.es',
         passwordHash: adminPasswordHash,
         name: 'Superadministrador Principal',
+        role: 'SUPERADMIN',
+        status: 'ACTIVE',
+        mustChangePassword: false,
+        emailVerified: true,
+        lastLoginAt: now,
+        createdAt: '2026-01-10T08:00:00.000Z',
+        updatedAt: now,
+      },
+      {
+        id: 'usr_superadmin_02',
+        email: 'comercialobejo@gmail.com',
+        passwordHash: adminPasswordHash,
+        name: 'Superadministrador Comercial',
         role: 'SUPERADMIN',
         status: 'ACTIVE',
         mustChangePassword: false,

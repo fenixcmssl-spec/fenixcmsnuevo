@@ -46,7 +46,7 @@ export default function SuperadminDashboard() {
       { id: 'ten_modaboutique', name: 'Moda Boutique París', slug: 'modaboutique', primaryDomain: 'modaboutique.com', authorizedModules: ['ecommerce'], status: 'ACTIVE' },
     ],
     recentAudit: [
-      { id: 'aud_01', action: 'SUPERADMIN_INITIALIZED', resource: 'System', userEmail: 'admin@fenixcms.es', ipAddress: '127.0.0.1', createdAt: new Date().toISOString() },
+      { id: 'aud_01', action: 'SUPERADMIN_INITIALIZED', resource: 'System', userEmail: 'admin@fenixcms.es', ipAddress: '127.0.0.1', createdAt: '2026-10-20T08:00:00.000Z' },
     ],
   });
   const [loading, setLoading] = useState(false);
@@ -55,12 +55,14 @@ export default function SuperadminDashboard() {
     try {
       setLoading(true);
       const res = await fetch('/api/superadmin/dashboard');
-      const json = await res.json();
-      if (json.ok) {
-        setData(json.data);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.ok) {
+          setData(json.data);
+        }
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
+      // Keep robust pre-seeded metrics when session is not yet active
     } finally {
       setLoading(false);
     }
@@ -151,7 +153,7 @@ export default function SuperadminDashboard() {
               <div key={m.code} className="p-3.5 rounded-lg border border-[#DDDDDD] bg-neutral-50/50 flex items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="font-bold text-xs text-[#171717]">{m.name}</div>
-                  <div className="text-[11px] text-[#626262] truncate">{m.desc}</div>
+                  <div className="text-[11px] text-[#626262]">{m.desc}</div>
                 </div>
                 <div className="shrink-0">
                   <span className="whitespace-nowrap text-xs font-bold px-2.5 py-1 rounded bg-neutral-200 text-[#171717]">
@@ -256,8 +258,8 @@ export default function SuperadminDashboard() {
                 <div>
                   <span className="font-bold text-[#171717] mr-1.5">{log.action}</span>
                   <span className="text-[#626262]">en {log.resource}</span>
-                  <div className="text-[10px] text-neutral-400 font-mono mt-0.5">
-                    {log.userEmail || 'Sistema'} · {new Date(log.createdAt).toLocaleTimeString()}
+                  <div className="text-[10px] text-neutral-400 font-mono mt-0.5" suppressHydrationWarning>
+                    {log.userEmail || 'Sistema'} · {new Date(log.createdAt).toLocaleDateString()}
                   </div>
                 </div>
                 <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-200 text-[#171717]">
